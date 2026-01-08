@@ -1,0 +1,174 @@
+/* Tree Planting Donation App Extension Styles */
+.tree-planting-donation {
+  
+  padding: 16px;
+  background-color: rgba(0, 128, 96, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 128, 96, 0.2);
+  transition: all 0.3s ease;
+}
+
+.tree-planting-donation:hover {
+  background-color: rgba(0, 128, 96, 0.08);
+}
+
+.tree-planting-donation label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.tree-planting-donation input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid #008060;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.tree-planting-donation input[type="checkbox"]:checked {
+  background-color: #008060;
+  background-image: url("data:image/svg+xml,%3Csvg width='14' height='14' viewBox='0 0 14 14' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11.6666 3.5L5.24998 9.91667L2.33331 7' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.tree-planting-donation .donation-content {
+  flex: 1;
+}
+
+.tree-planting-donation .donation-title {
+  font-weight: 600;
+  color: #202223;
+  display: block;
+}
+
+.tree-planting-donation .donation-description {
+  font-size: 14px;
+  color: #6d7175;
+  margin-top: 4px;
+  display: block;
+}
+
+.tree-planting-donation .donation-amount {
+  font-weight: 700;
+  color: #008060;
+}
+
+/* Loading state */
+.tree-planting-donation.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.tree-planting-donation.loading:after {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #008060;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Error state */
+.tree-planting-donation.error {
+  border-color: #d72c0d;
+  background-color: rgba(215, 44, 13, 0.05);
+}
+
+.tree-planting-donation .error-message {
+  color: #d72c0d;
+  font-size: 14px;
+  margin-top: 8px;
+  display: none;
+}
+
+.tree-planting-donation.error .error-message {
+  display: block;
+}
+
+/* Cart drawer specific styles */
+.cart-drawer .tree-planting-donation {
+ 
+ 
+}
+
+.cart-drawer .tree-planting-donation label {
+  align-items: center;
+}
+
+.cart-drawer .tree-planting-donation .donation-description {
+  font-size: 13px;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .tree-planting-donation {
+    padding: 12px;
+  }
+  
+  .tree-planting-donation label {
+    font-size: 15px;
+  }
+}
+
+/* Cart-specific styles */
+.tree-planting-donation-cart {
+
+  background-color: rgba(0, 128, 96, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 128, 96, 0.2);
+}
+
+.tree-planting-donation-cart-drawer {
+  margin: 15px 0;
+  padding: 0px;
+  background-color: rgba(0, 128, 96, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 128, 96, 0.2);
+}
+
+.cart-drawer-donation {
+  margin-top: 15px !important;
+  margin-bottom: 15px !important;
+}
+
+/* Ensure it appears at the right place in cart flows */
+.cart-drawer .tree-planting-donation-cart-drawer {
+  order: 999; /* Make it appear near the end */
+}
+
+/* Hide the original wrapper */
+.tree-planting-donation-wrapper {
+  display: none !important;
+}
+
+/* Show only injected blocks */
+.tree-planting-donation-injected {
+  display: block !important;
+}
+    .cart__ctas {
+        display: flex;
+        gap: 1rem;
+        flex-direction: column !important;
+    }
+
+    .tree-planting-donation-wrapper.tree-planting-donation-injected.tree-planting-donation-cart-drawer.cart-drawer-donation {
+    display: none !important;
+}
+
+.cart-errors, #CartDrawer-CartErrors,#cart-errors{
+  display:none !important
+}

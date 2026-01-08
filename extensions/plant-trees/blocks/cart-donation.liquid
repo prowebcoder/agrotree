@@ -1,0 +1,875 @@
+{% comment %}
+  Tree Planting Donation App Block - Cart Page & Cart Drawer
+  Version: 15.0.0 - FIXED AJAX CART UPDATE FOR DRAWER
+  Works with Dawn and other Shopify 2.0 themes
+{% endcomment %}
+
+{{ 'tree-planting-donation.css' | asset_url | stylesheet_tag }}
+
+{%- comment -%}
+  Get metafield values
+{%- endcomment -%}
+{%- assign donation_enabled = app.metafields.tree_planting.donation_enabled -%}
+{%- assign donation_amount = app.metafields.tree_planting.donation_amount | default: '5.00' -%}
+{%- assign product_id = app.metafields.tree_planting.donation_product_id -%}
+{%- assign variant_id = app.metafields.tree_planting.donation_variant_id -%}
+
+{%- comment -%}
+  Check if donation is enabled
+{%- endcomment -%}
+{%- if donation_enabled == true and product_id and variant_id -%}
+  {%- comment -%}
+    Generate a unique ID for this donation block
+  {%- endcomment -%}
+  {%- assign donation_block_id = 'tree-planting-donation-' | append: section.id | default: 'default' -%}
+  
+  <div class="tree-planting-donation-wrapper" id="{{ donation_block_id }}" style="display: none;">
+    <div class="tree-planting-donation">
+      <label for="donation-checkbox-{{ donation_block_id }}">
+        <input type="checkbox"
+               id="donation-checkbox-{{ donation_block_id }}"
+               name="attributes[add_donation]"
+               value="yes"
+               data-donation-product-id="{{ product_id }}"
+               data-donation-variant-id="{{ variant_id }}"
+               data-donation-amount="{{ donation_amount }}"
+               data-donation-block-id="{{ donation_block_id }}">
+        <div class="donation-content">
+          <span class="donation-title">
+            Add <span class="donation-amount">${{ donation_amount }}</span> to plant a tree
+          </span>
+          <span class="donation-description">
+            Support reforestation with your purchase. ${{ donation_amount }} plants one tree.
+          </span>
+        </div>
+      </label>
+      <div class="error-message" id="donation-error-{{ donation_block_id }}"></div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+      
+      class TreeDonationInjector {
+        constructor() {
+          this.shopDomain = window.location.hostname.replace('.myshopify.com', '');
+          this.donationBlockId = '{{ donation_block_id }}';
+          this.donationProductId = '{{ product_id }}';
+          this.donationVariantId = '{{ variant_id }}';
+          this.donationAmount = '{{ donation_amount }}';
+          this.donationEnabled = {{ donation_enabled | default: false }};
+          this.cartInjected = false;
+          this.cartDrawerInjected = false;
+          this.isProcessing = false;
+          this.initialized = false;
+          this.csrfToken = null;
+          this.init();
+        }
+        
+        init() {
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.startInjection());
+          } else {
+            this.startInjection();
+          }
+        }
+        
+        async startInjection() {
+          if (!this.donationEnabled) {
+            console.log('Tree Planting Donation: Donation not enabled');
+            return;
+          }
+          
+          if (!this.donationProductId || !this.donationVariantId) {
+            console.log('Tree Planting Donation: Product configuration missing');
+            return;
+          }
+          
+          if (this.initialized) return;
+          this.initialized = true;
+          
+          // Get CSRF token if available
+          this.csrfToken = document.querySelector('meta[name="csrf-token"]')?.content ||
+                          document.querySelector('input[name="csrf-token"]')?.value;
+          
+          // Start injection
+          await this.injectDonationBlocks();
+          this.observeDOMChanges();
+          
+          // Listen for cart updates
+          this.setupCartListeners();
+          
+          // Initial check for existing donation
+          setTimeout(() => {
+            this.checkAllDonationStates();
+          }, 2000);
+        }
+        
+        async injectDonationBlocks() {
+          // Inject into cart page if on cart page
+          if (this.isCartPage()) {
+            await this.injectCartDonation();
+           
+          }
+          
+          // Always try to inject into cart drawer
+          await this.injectCartDrawerDonation();
+        }
+        
+        isCartPage() {
+          const path = window.location.pathname.toLowerCase();
+          return path.includes('/cart') || path.endsWith('/cart');
+        }
+        
+        findCartContainer() {
+          const selectors = [
+            'form[action*="/cart"]:not([action*="/cart/add"])',
+            'form[action*="/checkout"]',
+            'form.cart',
+            'form#cart',
+            '[data-cart-form]',
+            '[data-section-type="cart"]',
+            '.cart-form',
+            '.cart__form',
+            '#cart-form',
+            '.cart',
+            '#cart',
+            'main form',
+            'form'
+          ];
+          
+          for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el) {
+              // Check if this is a cart form (not product form)
+              const isProductForm = el.closest('[data-product-form]') || 
+                                   el.action?.includes('/cart/add') ||
+                                   el.querySelector('[name="add"]');
+              
+              if (!isProductForm && (el.action?.includes('/cart') || 
+                  el.action?.includes('/checkout') || 
+                  el.querySelector('[name="checkout"]'))) {
+                return el;
+              }
+            }
+          }
+          
+          return null;
+        }
+        
+        findCartDrawer() {
+          const selectors = [
+            '#CartDrawer',
+            '.cart-drawer',
+            'cart-drawer',
+            '[data-cart-drawer]',
+            '.drawer--cart',
+            '.ajaxcart',
+            '[class*="drawer"][class*="cart"]',
+            '.drawer'
+          ];
+          
+          for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el) {
+              // Additional verification
+              if (el.querySelector('[data-cart-items], .cart-items, .cart-drawer-items') || 
+                  el.id === 'CartDrawer' ||
+                  el.classList.contains('cart-drawer')) {
+                return el;
+              }
+            }
+          }
+          return null;
+        }
+        
+        findCheckoutButton(container) {
+          if (!container) return null;
+          
+          const checkoutSelectors = [
+            '[name="checkout"]',
+            '[type="submit"]',
+            '.checkout',
+            '#checkout',
+            '.cart__checkout',
+            '.cart-checkout',
+            '.checkout-btn',
+            '[value="Checkout"]',
+            'button[type="submit"]'
+          ];
+          
+          for (const selector of checkoutSelectors) {
+            const btn = container.querySelector(selector);
+            if (btn && (btn.type === 'submit' || btn.name === 'checkout' || 
+                btn.value === 'Checkout' || btn.classList.contains('checkout'))) {
+              return btn;
+            }
+          }
+          
+          return null;
+        }
+        
+
+        
+        async injectCartDonation() {
+          if (this.cartInjected) return;
+          
+          const cartContainer = this.findCartContainer();
+          if (!cartContainer) return;
+          
+          // Check if already injected
+          if (cartContainer.querySelector('.tree-planting-donation-injected')) {
+            this.cartInjected = true;
+            return;
+          }
+          
+          const donationBlock = document.getElementById(this.donationBlockId);
+          if (!donationBlock) return;
+          
+          // Create a clone for the cart
+          const cartDonationBlock = donationBlock.cloneNode(true);
+          cartDonationBlock.style.display = 'block';
+          cartDonationBlock.classList.add('tree-planting-donation-injected');
+          cartDonationBlock.classList.add('tree-planting-donation-cart');
+          cartDonationBlock.style.margin = '20px 0';
+          
+          // Find the best place to insert
+          const checkoutBtn = this.findCheckoutButton(cartContainer);
+          const checkoutSection = cartContainer.querySelector('.cart__checkout, .checkout-section, .cart-checkout');
+          
+          if (checkoutBtn && checkoutBtn.parentNode) {
+            checkoutBtn.parentNode.insertBefore(cartDonationBlock, checkoutBtn);
+            console.log('Tree Planting Donation: Injected before checkout button');
+          } else if (checkoutSection && checkoutSection.parentNode) {
+            checkoutSection.parentNode.insertBefore(cartDonationBlock, checkoutSection);
+            console.log('Tree Planting Donation: Injected before checkout section');
+          } else {
+            const cartFooter = cartContainer.querySelector('.cart__footer, .cart-footer, .cart-totals, .totals, .cart__total');
+            if (cartFooter && cartFooter.parentNode) {
+              cartFooter.parentNode.insertBefore(cartDonationBlock, cartFooter);
+              console.log('Tree Planting Donation: Injected before cart footer');
+            } else {
+              cartContainer.appendChild(cartDonationBlock);
+              console.log('Tree Planting Donation: Injected at end of cart');
+            }
+          }
+          
+          this.cartInjected = true;
+          console.log('Tree Planting Donation: Successfully injected into cart page');
+          this.initializeDonationFunctionality(cartDonationBlock);
+        }
+        
+        async injectCartDrawerDonation() {
+          const cartDrawer = this.findCartDrawer();
+          if (!cartDrawer) return;
+          
+          // Check if drawer is open/visible
+          const isDrawerOpen = !cartDrawer.classList.contains('hidden') && 
+                              !cartDrawer.classList.contains('is-closed') &&
+                              window.getComputedStyle(cartDrawer).display !== 'none';
+          
+          if (!isDrawerOpen) {
+            // Don't inject if drawer is not open
+            return;
+          }
+          
+          if (this.cartDrawerInjected) return;
+          
+          // Check if already injected
+          if (cartDrawer.querySelector('.tree-planting-donation-injected')) {
+            this.cartDrawerInjected = true;
+            return;
+          }
+          
+          const donationBlock = document.getElementById(this.donationBlockId);
+          if (!donationBlock) return;
+          
+          // Create a clone for the cart drawer
+          const drawerDonationBlock = donationBlock.cloneNode(true);
+          drawerDonationBlock.style.display = 'block';
+          drawerDonationBlock.classList.add('tree-planting-donation-injected');
+          drawerDonationBlock.classList.add('tree-planting-donation-cart-drawer');
+          drawerDonationBlock.classList.add('cart-drawer-donation');
+          drawerDonationBlock.style.margin = '15px 0';
+          
+          // Find where to insert in the drawer
+          const checkoutBtn = this.findCheckoutButton(cartDrawer);
+          const drawerFooter = cartDrawer.querySelector('.drawer__footer, .cart-drawer-footer, .ajaxcart__footer');
+          const drawerContent = cartDrawer.querySelector('.drawer__inner, .drawer-content, .cart-drawer-content');
+          
+          const targetContainer = drawerContent || cartDrawer;
+          
+          if (checkoutBtn && checkoutBtn.parentNode) {
+            checkoutBtn.parentNode.insertBefore(drawerDonationBlock, checkoutBtn);
+            console.log('Tree Planting Donation: Injected before checkout button in drawer');
+          } else if (drawerFooter && drawerFooter.parentNode) {
+            drawerFooter.parentNode.insertBefore(drawerDonationBlock, drawerFooter);
+            console.log('Tree Planting Donation: Injected before footer in drawer');
+          } else {
+            const drawerTotals = cartDrawer.querySelector('.drawer__total, .cart-drawer-total, .ajaxcart__total');
+            if (drawerTotals && drawerTotals.parentNode) {
+              drawerTotals.parentNode.insertBefore(drawerDonationBlock, drawerTotals);
+              console.log('Tree Planting Donation: Injected before totals in drawer');
+            } else {
+              targetContainer.appendChild(drawerDonationBlock);
+              console.log('Tree Planting Donation: Injected at end of drawer');
+            }
+          }
+          
+          this.cartDrawerInjected = true;
+          console.log('Tree Planting Donation: Successfully injected into cart drawer');
+          this.initializeDonationFunctionality(drawerDonationBlock);
+        }
+        
+        initializeDonationFunctionality(donationContainer) {
+          const checkbox = donationContainer.querySelector('input[type="checkbox"]');
+          if (!checkbox) return;
+          
+          const errorElement = donationContainer.querySelector('.error-message');
+          
+          // Initialize checkbox state
+          this.checkDonationInCart(checkbox);
+          
+          // Add event listener - only once
+          checkbox.removeEventListener('change', this.handleCheckboxChange);
+          this.handleCheckboxChange = (e) => {
+            if (this.isProcessing) {
+              e.preventDefault();
+              return;
+            }
+            this.handleDonationChange(e.target.checked, checkbox, errorElement);
+          };
+          checkbox.addEventListener('change', this.handleCheckboxChange);
+        }
+        
+        async checkAllDonationStates() {
+          const checkboxes = document.querySelectorAll('.tree-planting-donation-injected input[type="checkbox"]');
+          for (const checkbox of checkboxes) {
+            await this.checkDonationInCart(checkbox);
+          }
+        }
+        
+        async checkDonationInCart(checkbox) {
+          try {
+            const response = await fetch('/cart.js');
+            if (!response.ok) throw new Error('Failed to fetch cart');
+            
+            const cart = await response.json();
+            
+            // Extract numeric IDs
+            const variantId = this.extractNumericId(checkbox.dataset.donationVariantId);
+            const productId = this.extractNumericId(checkbox.dataset.donationProductId);
+            
+            // Check if donation is in cart
+            const hasDonation = cart.items.some(item => {
+              return item.variant_id == variantId || 
+                     (item.properties && item.properties._tree_donation === 'true');
+            });
+            
+            checkbox.checked = hasDonation;
+            
+          } catch (error) {
+            console.error('Tree Planting Donation: Error checking donation:', error);
+          }
+        }
+        
+        extractNumericId(globalId) {
+          if (!globalId) return null;
+          if (globalId.toString().includes('gid://')) {
+            return globalId.split('/').pop();
+          }
+          return globalId;
+        }
+        
+        async handleDonationChange(isChecked, checkbox, errorElement) {
+          if (this.isProcessing) return;
+          this.isProcessing = true;
+          
+          const donationContainer = checkbox.closest('.tree-planting-donation');
+          if (donationContainer) {
+            donationContainer.classList.add('loading');
+          }
+          
+          try {
+            if (errorElement) errorElement.textContent = '';
+            
+            const productId = this.extractNumericId(checkbox.dataset.donationProductId);
+            const variantId = this.extractNumericId(checkbox.dataset.donationVariantId);
+            const donationAmount = checkbox.dataset.donationAmount;
+            
+            console.log('Tree Planting Donation: Processing donation change:', {
+              isChecked,
+              productId,
+              variantId,
+              donationAmount
+            });
+            
+            if (isChecked) {
+              await this.addDonationToCart(productId, variantId, donationAmount);
+            } else {
+              await this.removeDonationFromCart(productId, variantId);
+            }
+            
+            // Use Dawn's built-in cart update mechanism
+            await this.updateCartViaDawn();
+            
+          } catch (error) {
+            console.error('Tree Planting Donation: Error handling donation:', error);
+            if (errorElement) {
+              errorElement.textContent = 'Error updating donation. Please try again.';
+            }
+            checkbox.checked = !isChecked;
+          } finally {
+            this.isProcessing = false;
+            if (donationContainer) {
+              donationContainer.classList.remove('loading');
+            }
+          }
+        }
+        
+        async addDonationToCart(productId, variantId, donationAmount) {
+          console.log('Tree Planting Donation: Adding donation to cart...');
+          
+          // Check if already in cart
+          try {
+            const cartResponse = await fetch('/cart.js');
+            const cart = await cartResponse.json();
+            
+            const alreadyInCart = cart.items.some(item => 
+              item.variant_id == variantId || 
+              (item.properties && item.properties._tree_donation === 'true')
+            );
+            
+            if (alreadyInCart) {
+              console.log('Tree Planting Donation: Already in cart');
+              return;
+            }
+          } catch (error) {
+            console.error('Tree Planting Donation: Error checking cart:', error);
+          }
+          
+          // Prepare the data in the exact format Shopify expects
+          const formData = new FormData();
+          formData.append('id', variantId);
+          formData.append('quantity', '1');
+          
+          // Add properties
+          formData.append('properties[_tree_donation]', 'true');
+          formData.append('properties[_donation_amount]', donationAmount);
+          formData.append('properties[_donation_product_id]', productId);
+          
+          const response = await fetch('/cart/add.js', {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Tree Planting Donation: Add to cart failed:', errorText);
+            
+            // Try alternative method with JSON
+            const data = {
+              items: [{
+                id: variantId,
+                quantity: 1,
+                properties: {
+                  '_tree_donation': 'true',
+                  '_donation_amount': donationAmount,
+                  '_donation_product_id': productId
+                }
+              }]
+            };
+            
+            const altResponse = await fetch('/cart/add.js', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              body: JSON.stringify(data)
+            });
+            
+            if (!altResponse.ok) {
+              throw new Error(`Alternative method also failed: ${altResponse.status}`);
+            }
+            
+            const result = await altResponse.json();
+            console.log('Tree Planting Donation: Added via alternative method:', result);
+            return result;
+          }
+          
+          const result = await response.json();
+          console.log('Tree Planting Donation: Added successfully:', result);
+         {% if request.page_type == 'cart' %}
+          location.reload();
+          {% endif %}
+          return result;
+        }
+        
+        async removeDonationFromCart(productId, variantId) {
+          console.log('Tree Planting Donation: Removing donation from cart...');
+          
+          // Get current cart
+          const cartResponse = await fetch('/cart.js');
+          const cart = await cartResponse.json();
+          
+          // Find donation item
+          let donationItem = cart.items.find(item => item.variant_id == variantId);
+          
+          if (!donationItem) {
+            donationItem = cart.items.find(item => 
+              item.properties && item.properties._tree_donation === 'true'
+            );
+          }
+          
+          if (!donationItem && productId) {
+            donationItem = cart.items.find(item => item.product_id == productId);
+          }
+          
+          if (donationItem) {
+            console.log('Tree Planting Donation: Found donation item:', donationItem);
+            
+            const formData = new FormData();
+            formData.append('id', donationItem.key);
+            formData.append('quantity', '0');
+            
+            const response = await fetch('/cart/change.js', {
+              method: 'POST',
+              body: formData,
+              headers: {
+                'Accept': 'application/json'
+              }
+            });
+            
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`Failed to remove donation: ${errorText}`);
+            }
+            
+            const result = await response.json();
+            console.log('Tree Planting Donation: Removed successfully:', result);
+            return result;
+          } else {
+            console.log('Tree Planting Donation: No donation item found in cart');
+          }
+        }
+        
+        // NEW: Update cart using Dawn's sections rendering API
+        async updateCartViaDawn() {
+          console.log('Tree Planting Donation: Updating cart via Dawn sections API...');
+          
+          try {
+            // Get the cart drawer element
+            const cartDrawer = document.querySelector('cart-drawer');
+            
+            if (cartDrawer && typeof cartDrawer.renderContents === 'function') {
+              // Dawn's approach: fetch cart data and update sections
+              const cartResponse = await fetch('/cart.js');
+              const cart = await cartResponse.json();
+              
+              // Fetch the sections Dawn wants to update
+              const sectionsToRender = this.getSectionsToRender();
+              const sections = {};
+              
+              for (const section of sectionsToRender) {
+                try {
+                  const response = await fetch(`/cart?section_id=${section.id}`);
+                  if (response.ok) {
+                    const text = await response.text();
+                    sections[section.id] = text;
+                  }
+                } catch (error) {
+                  console.error(`Error fetching section ${section.id}:`, error);
+                }
+              }
+              
+              // Create parsedState object that Dawn expects
+              const parsedState = {
+                ...cart,
+                sections: sections
+              };
+              
+              // Call Dawn's renderContents method
+              cartDrawer.renderContents(parsedState);
+              console.log('Tree Planting Donation: Updated cart drawer via Dawn API');
+              
+              // Re-inject donation block after Dawn updates
+              setTimeout(() => {
+                this.cartDrawerInjected = false;
+                this.injectCartDrawerDonation();
+              }, 300);
+              
+            } else {
+              // Fallback: Use Shopify's standard cart update
+              await this.updateCartViaShopifyAPI();
+            }
+            
+          } catch (error) {
+            console.error('Tree Planting Donation: Error updating via Dawn:', error);
+            // Fallback to standard update
+            await this.updateCartViaShopifyAPI();
+          }
+        }
+        
+        // Get sections to render (matching Dawn's approach)
+        getSectionsToRender() {
+          return [
+            {
+              id: 'cart-drawer',
+              selector: '#CartDrawer'
+            },
+            {
+              id: 'cart-icon-bubble',
+              selector: '.shopify-section'
+            }
+          ];
+        }
+        
+        // Fallback: Update cart using standard Shopify API
+        async updateCartViaShopifyAPI() {
+          console.log('Tree Planting Donation: Updating cart via standard API...');
+          
+          // Method 1: Try to trigger Shopify's built-in cart update
+          if (typeof Shopify === 'object') {
+            if (typeof Shopify.updateCart === 'function') {
+              try {
+                Shopify.updateCart();
+                console.log('Tree Planting Donation: Shopify.updateCart called');
+              } catch (e) {
+                console.log('Tree Planting Donation: Shopify.updateCart not available');
+              }
+            }
+            
+            if (typeof Shopify.updateCartInfo === 'function') {
+              try {
+                Shopify.updateCartInfo();
+                console.log('Tree Planting Donation: Shopify.updateCartInfo called');
+              } catch (e) {
+                console.log('Tree Planting Donation: Shopify.updateCartInfo not available');
+              }
+            }
+          }
+          
+          // Method 2: Dispatch custom events
+          document.dispatchEvent(new CustomEvent('cart:updated'));
+          document.dispatchEvent(new CustomEvent('cart:refresh'));
+          
+          // Method 3: Update cart totals manually
+          await this.updateCartTotalsManually();
+          
+          // Update all donation checkboxes
+          setTimeout(() => {
+            this.checkAllDonationStates();
+          }, 1000);
+        }
+        
+        // Update cart totals manually (universal approach)
+        async updateCartTotalsManually() {
+          try {
+            const response = await fetch('/cart.js');
+            if (!response.ok) throw new Error('Failed to fetch cart');
+            
+            const cart = await response.json();
+            
+            // Update cart count (item quantity)
+            const cartCountSelectors = [
+              '.cart-count',
+              '.js-cart-count',
+              '#cart-count',
+              '.site-header__cart-count',
+              '.cart__count',
+              '.header-cart-count',
+              '[data-cart-count]'
+            ];
+            
+            cartCountSelectors.forEach(selector => {
+              const elements = document.querySelectorAll(selector);
+              elements.forEach(el => {
+                if (el.tagName === 'SPAN' || el.tagName === 'DIV' || el.tagName === 'P') {
+                  el.textContent = cart.item_count;
+                }
+              });
+            });
+            
+            // Update cart total price
+            const cartTotalSelectors = [
+              '.cart-total-price',
+              '.js-cart-total',
+              '#cart-total',
+              '.site-header__cart-total',
+              '.cart__total',
+              '.cart__total-price',
+              '.total-price',
+              '[data-cart-total]'
+            ];
+            
+            cartTotalSelectors.forEach(selector => {
+              const elements = document.querySelectorAll(selector);
+              elements.forEach(el => {
+                if (el.textContent.includes('$') || el.textContent.includes('€') || el.textContent.includes('£')) {
+                  // Format the total price
+                  const formattedPrice = new Intl.NumberFormat('en-US', {
+                    style: 'currency',
+                    currency: cart.currency || 'USD',
+                    minimumFractionDigits: 2
+                  }).format(cart.total_price / 100);
+                  
+                  el.textContent = formattedPrice;
+                }
+              });
+            });
+            
+            console.log('Tree Planting Donation: Cart totals updated manually');
+            
+          } catch (error) {
+            console.error('Tree Planting Donation: Error updating cart totals:', error);
+          }
+        }
+        
+        // Setup cart event listeners
+        setupCartListeners() {
+          if (typeof window === 'undefined') return;
+          
+          // Listen for cart updates
+          const cartEvents = [
+            'cart:updated',
+            'cart:request-complete',
+            'cart:change',
+            'cart:add',
+            'cart:added',
+            'cart:refresh',
+            'section:reload',
+            'shopify:section:load'
+          ];
+          
+          cartEvents.forEach(eventName => {
+            document.addEventListener(eventName, () => {
+              console.log(`Tree Planting Donation: ${eventName} event detected`);
+              setTimeout(() => {
+                this.checkAllDonationStates();
+              }, 500);
+            });
+          });
+          
+          // Listen for cart drawer open events
+          document.addEventListener('cart:open', () => {
+            setTimeout(() => {
+              this.cartDrawerInjected = false;
+              this.injectCartDrawerDonation();
+            }, 300);
+          });
+          
+          // Setup mutation observer for cart drawer
+          this.setupDrawerObserver();
+        }
+        
+        setupDrawerObserver() {
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+              if (mutation.attributeName === 'class' || mutation.attributeName === 'style' || mutation.attributeName === 'open') {
+                const cartDrawer = this.findCartDrawer();
+                if (cartDrawer && cartDrawer === mutation.target) {
+                  const isNowVisible = !cartDrawer.classList.contains('hidden') && 
+                                      !cartDrawer.classList.contains('is-closed') &&
+                                      cartDrawer.getAttribute('aria-hidden') !== 'true' &&
+                                      window.getComputedStyle(cartDrawer).display !== 'none';
+                  
+                  if (isNowVisible && !this.cartDrawerInjected) {
+                    console.log('Tree Planting Donation: Cart drawer opened, injecting...');
+                    setTimeout(() => {
+                      this.injectCartDrawerDonation();
+                    }, 300);
+                  }
+                }
+              }
+            });
+          });
+          
+          // Start observing when drawer is found
+          const checkForDrawer = () => {
+            const cartDrawer = this.findCartDrawer();
+            if (cartDrawer) {
+              observer.observe(cartDrawer, { 
+                attributes: true, 
+                attributeFilter: ['class', 'style', 'open', 'aria-hidden'] 
+              });
+              console.log('Tree Planting Donation: Cart drawer observer set up');
+            } else {
+              setTimeout(checkForDrawer, 1000);
+            }
+          };
+          
+          checkForDrawer();
+        }
+        
+        observeDOMChanges() {
+          if (!document.body) return;
+          
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+              if (mutation.addedNodes.length) {
+                mutation.addedNodes.forEach((node) => {
+                  if (node.nodeType === Node.ELEMENT_NODE) {
+                    // Check for cart drawer
+                    if (node.matches && (node.matches('#CartDrawer, .cart-drawer, cart-drawer') || 
+                        (node.querySelector && node.querySelector('#CartDrawer, .cart-drawer')))) {
+                      console.log('Tree Planting Donation: Cart drawer detected in DOM');
+                      
+                      setTimeout(() => {
+                        this.setupDrawerObserver();
+                      }, 500);
+                      
+                      setTimeout(() => {
+                        this.cartDrawerInjected = false;
+                        this.injectCartDrawerDonation();
+                      }, 300);
+                    }
+                    
+                    // Check for cart page elements
+                    if (node.querySelector && node.querySelector('[action*="/cart"], [name="checkout"]')) {
+                      setTimeout(() => {
+                        this.cartInjected = false;
+                        this.injectCartDonation();
+                      }, 500);
+                    }
+                  }
+                });
+              }
+            });
+          });
+          
+          observer.observe(document.body, { childList: true, subtree: true });
+        }
+      }
+      
+      // Initialize with delay to avoid conflicts
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          window.treeDonationInjector = new TreeDonationInjector();
+        }, 1000);
+      }
+      
+    })();
+  </script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "🌳 Tree Planting Donation",
+  "target": "head",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Tree Planting Donation"
+    },
+    {
+      "type": "paragraph",
+      "content": "This block adds a donation checkbox to support tree planting. It will automatically appear in cart pages and cart drawers. Configure settings in the app."
+    }
+  ]
+}
+{% endschema %}

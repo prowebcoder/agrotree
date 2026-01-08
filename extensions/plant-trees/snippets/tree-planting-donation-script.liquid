@@ -1,0 +1,178 @@
+{% comment %}
+  Tree Planting Donation Script Snippet
+  Include this in theme.liquid or cart template for better integration
+{% endcomment %}
+
+<script>
+  // Global donation configuration
+  window.treePlantingDonation = {
+    enabled: {{ cart.attributes.donation_enabled | default: false }},
+    amount: {{ cart.attributes.donation_amount | default: '5.00' | json }},
+    productId: {{ cart.attributes.donation_product_id | default: '' | json }},
+    variantId: {{ cart.attributes.donation_variant_id | default: '' | json }},
+    
+    // Initialize donation functionality
+    init: function() {
+      if (!this.enabled) return;
+      
+      // Listen for cart updates
+      document.addEventListener('cart:updated', this.handleCartUpdate.bind(this));
+      
+      // Initialize any donation checkboxes on the page
+      this.initCheckboxes();
+    },
+    
+    // Initialize donation checkboxes
+    initCheckboxes: function() {
+      const checkboxes = document.querySelectorAll('[data-tree-donation-checkbox]');
+      checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', this.handleDonationChange.bind(this));
+      });
+    },
+    
+    // Handle donation checkbox change
+    handleDonationChange: function(event) {
+      const checkbox = event.target;
+      const isChecked = checkbox.checked;
+      
+      // Update cart attribute
+      this.updateCartAttribute('add_donation', isChecked ? 'yes' : '');
+      
+      // Add/remove donation product from cart
+      if (isChecked) {
+        this.addDonationToCart();
+      } else {
+        this.removeDonationFromCart();
+      }
+    },
+    
+    // Update cart attribute
+    updateCartAttribute: function(key, value) {
+      fetch('/cart/update.js', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          attributes: {
+            [key]: value
+          }
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        // Dispatch cart updated event
+        document.dispatchEvent(new CustomEvent('cart:updated'));
+      })
+      .catch(error => {
+        console.error('Error updating cart attribute:', error);
+      });
+    },
+    
+    // Add donation to cart
+    addDonationToCart: function() {
+      if (!this.productId || !this.variantId) return;
+      
+      const formData = {
+        items: [{
+          id: this.variantId,
+          quantity: 1,
+          properties: {
+            '_tree_donation': 'true',
+            '_donation_amount': this.amount
+          }
+        }]
+      };
+      
+      fetch('/cart/add.js', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData)
+      })
+      .then(response => response.json())
+      .then(data => {
+        document.dispatchEvent(new CustomEvent('cart:updated'));
+      })
+      .catch(error => {
+        console.error('Error adding donation to cart:', error);
+      });
+    },
+    
+    // Remove donation from cart
+    removeDonationFromCart: function() {
+      fetch('/cart.js')
+      .then(response => response.json())
+      .then(cart => {
+        const donationItem = cart.items.find(item => 
+          item.properties && item.properties._tree_donation === 'true'
+        );
+        
+        if (donationItem) {
+          return fetch('/cart/change.js', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              id: donationItem.key,
+              quantity: 0
+            })
+          });
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        document.dispatchEvent(new CustomEvent('cart:updated'));
+      })
+      .catch(error => {
+        console.error('Error removing donation from cart:', error);
+      });
+    },
+    
+    // Handle cart updates
+    handleCartUpdate: function() {
+      // Re-initialize checkboxes after cart update
+      setTimeout(() => {
+        this.initCheckboxes();
+      }, 100);
+    }
+  };
+  
+  // Initialize when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      window.treePlantingDonation.init();
+    });
+  } else {
+    window.treePlantingDonation.init();
+  }
+</script>
+
+<script>
+  (function() {
+    // Debug script for theme app extension
+    console.log('Tree Planting Donation Extension Loaded');
+    
+    // Check if metafields are available
+    if (typeof window.Shopify === 'object' && window.Shopify.designMode) {
+      console.log('In theme editor mode');
+      
+      // Listen for theme editor events
+      document.addEventListener('shopify:section:load', function() {
+        console.log('Section loaded, checking for donation block');
+        checkDonationBlockAvailability();
+      });
+      
+      // Initial check
+      setTimeout(checkDonationBlockAvailability, 1000);
+    }
+    
+    function checkDonationBlockAvailability() {
+      // This would normally check app.metafields.tree_planting.donation_enabled
+      console.log('Checking donation block availability...');
+      console.log('Theme app extension metafields should determine visibility');
+    }
+  })();
+</script>
