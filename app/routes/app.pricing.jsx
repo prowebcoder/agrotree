@@ -588,7 +588,7 @@ export default function PricingPage() {
         )}
 
         {/* Current Plan Section */}
-        {currentPlan && (
+        {/* {currentPlan && (
           <s-box padding="base"
             background="base"
             borderRadius="base"
@@ -645,7 +645,7 @@ export default function PricingPage() {
               </s-stack>
             </s-stack>
           </s-box>
-        )}
+        )} */}
         
         {/* Usage Progress Bar for Free Plan */}
         {currentPlan === 'free' && (
@@ -681,14 +681,7 @@ export default function PricingPage() {
                 />
               </div>
               
-              <s-stack direction="inline" justifyContent="space-between" style={{ marginTop: '4px' }}>
-                <s-text tone="subdued" variant="bodySm">
-                  {progressPercentage.toFixed(1)}% of monthly limit used
-                </s-text>
-                <s-text tone="subdued" variant="bodySm">
-                  Resets on 1st of next month
-                </s-text>
-              </s-stack>
+             
               
               {externalData.donationCount >= usageLimit && (
                 <s-banner tone="warning">
@@ -702,7 +695,7 @@ export default function PricingPage() {
         )}
 
         {/* Impact Summary */}
-        {(externalData.totalDonations > 0 || externalData.totalAmount > 0) && (
+        {/* {(externalData.totalDonations > 0 || externalData.totalAmount > 0) && (
           <s-box padding="base" background="success-subdued" borderRadius="base">
             <s-stack direction="block" gap="small">
               <s-heading level="h4">Your Environmental Impact</s-heading>
@@ -724,7 +717,7 @@ export default function PricingPage() {
               </s-grid>
             </s-stack>
           </s-box>
-        )}
+        )} */}
 
         {/* Pricing Cards */}
         <s-box>
