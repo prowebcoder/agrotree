@@ -82,24 +82,30 @@ export async function loader({ request }) {
 // Action function for free plan updates
 export async function action({ request }) {
   try {
-    const { authenticate, updatePricingPlan } = await import("../shopify.server");
+    const { authenticate, updatePricingPlan, cancelActiveSubscription } =
+      await import("../shopify.server");
+
     const { admin } = await authenticate.admin(request);
     const formData = await request.formData();
-    const plan = formData.get('plan');
-    
-    if (plan !== 'free') {
-      return { success: false, error: 'Only free plan can be updated via this endpoint' };
+    const plan = formData.get("plan");
+
+    if (plan !== "free") {
+      return { success: false, error: "Invalid plan" };
     }
-    
-    const result = await updatePricingPlan(admin, plan);
-    
-    return { success: true, plan: result.plan };
-    
+
+    // 🔑 CANCEL SHOPIFY SUBSCRIPTION FIRST
+    await cancelActiveSubscription(admin);
+
+    // 🔑 THEN update metafield
+    await updatePricingPlan(admin, "free");
+
+    return { success: true, plan: "free" };
   } catch (error) {
-    console.error('Error updating plan:', error);
+    console.error("Error downgrading to free:", error);
     return { success: false, error: error.message };
   }
 }
+
 
 // Add this missing import at the top (after the React imports)
 async function getBillingStatus(admin) {
@@ -349,14 +355,15 @@ export default function PricingPage() {
   };
   
   // Check if billing is active for each plan
-  const isBillingActive = (plan) => {
-    if (plan === 'free') return currentPlan === 'free';
-    
-    const planName = `Tree Planting - ${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan`;
-    return billingStatus.subscriptions.some(sub => 
-      sub.name === planName && sub.status === 'ACTIVE'
-    );
-  };
+const isBillingActive = (plan) => {
+  if (plan === 'free') return currentPlan === 'free';
+
+  return (
+    currentPlan === plan &&
+    billingStatus.subscriptions.some(sub => sub.status === 'ACTIVE')
+  );
+};
+
   
   const handleFreePlanSelect = () => {
     // Show confirmation for downgrade
@@ -367,85 +374,93 @@ export default function PricingPage() {
     }
   };
   
+  const isPlanSelected = (planId) => {
+  if (planId === 'free') {
+    return currentPlan === 'free';
+  }
+  return isBillingActive(planId);
+};
+
   const plans = [
-    {
-      id: 'free',
-      title: 'Free Plan',
-      description: 'Up to 5,000 monthly donations',
-      price: 'Free',
-      frequency: '',
-      features: [
-        'Tree planting donation product',
-        'Cart page integration',
-        'Cart drawer integration',
-        '5,000 monthly donations included',
-        'Basic analytics dashboard',
-        'Email support'
-      ],
-      button: {
-        content: currentPlan === 'free' ? 'Current Plan' : 'Switch to Free',
-        onClick: handleFreePlanSelect,
-        variant: 'secondary',
-        disabled: currentPlan === 'free' || fetcher.state === 'submitting',
-        loading: fetcher.state === 'submitting' && fetcher.formData?.get('plan') === 'free'
-      },
+  {
+    id: 'free',
+    title: 'Free Plan',
+    description: 'Up to 5,000 monthly donations',
+    price: 'Free',
+    frequency: '',
+    features: [
+      'Tree planting donation product',
+      'Cart page integration',
+      'Cart drawer integration',
+      '5,000 monthly donations included',
+      'Basic analytics dashboard',
+      'Email support'
+    ],
+    button: {
+      content: isPlanSelected('free') ? 'Current Plan' : 'Switch to Free',
+      onClick: handleFreePlanSelect,
+      variant: 'secondary',
+      disabled: isPlanSelected('free') || fetcher.state === 'submitting',
+      loading:
+        fetcher.state === 'submitting' &&
+        fetcher.formData?.get('plan') === 'free',
     },
-    {
-      id: 'essential',
-      title: 'Essential',
-      description: 'For growing stores',
-      price: '$6.99',
-      frequency: 'month',
-      featuredText: 'Most Popular',
-      features: [
-        'Everything in Free',
-        'Unlimited monthly donations',
-        'Advanced analytics',
-        'Order tracking dashboard',
-        'Custom donation amounts',
-        'Multiple language support',
-        'Priority email support',
-        'Monthly impact reports'
-      ],
-      button: {
-        content: isBillingActive('essential') ? 'Active Subscription' : 'Upgrade to Essential',
-        onClick: () => handlePlanSelect('essential'),
-        variant: 'primary',
-        disabled: isBillingActive('essential'),
-        secondaryAction: isBillingActive('essential') ? {
-          content: 'Manage in Shopify',
-          onClick: () => shopify.intents.invoke?.('admin:shopify:settings:billing')
-        } : undefined
-      },
+  },
+  {
+    id: 'essential',
+    title: 'Essential',
+    description: 'For growing stores',
+    price: '$6.99',
+    frequency: 'month',
+    featuredText: 'Most Popular',
+    features: [
+      'Everything in Free',
+      'Unlimited monthly donations',
+      'Advanced analytics',
+      'Order tracking dashboard',
+      'Custom donation amounts',
+      'Multiple language support',
+      'Priority email support',
+      'Monthly impact reports'
+    ],
+    button: {
+      content: isPlanSelected('essential')
+        ? 'Active Subscription'
+        : 'Upgrade to Essential',
+      onClick: () => handlePlanSelect('essential'),
+      variant: 'primary',
+      disabled: isPlanSelected('essential'),
+  
     },
-    {
-      id: 'professional',
-      title: 'Professional',
-      description: 'For high-volume stores',
-      price: '$29.99',
-      frequency: 'month',
-      features: [
-        'Everything in Essential',
-        'Custom branding options',
-        'API access for custom integrations',
-        'Advanced targeting rules',
-        'A/B testing capabilities',
-        'Dedicated account manager',
-        'Phone & priority support',
-        'Custom reporting'
-      ],
-      button: {
-        content: isBillingActive('professional') ? 'Active Subscription' : 'Upgrade to Professional',
-        onClick: () => handlePlanSelect('professional'),
-        variant: 'secondary',
-        disabled: isBillingActive('professional'),
-        secondaryAction: isBillingActive('professional') ? {
-          content: 'Manage in Shopify',
-          onClick: () => shopify.intents.invoke?.('admin:shopify:settings:billing')
-        } : undefined
-      },
+  },
+  {
+    id: 'professional',
+    title: 'Professional',
+    description: 'For high-volume stores',
+    price: '$29.99',
+    frequency: 'month',
+    features: [
+      'Everything in Essential',
+      'Custom branding options',
+      'API access for custom integrations',
+      'Advanced targeting rules',
+      'A/B testing capabilities',
+      'Dedicated account manager',
+      'Phone & priority support',
+      'Custom reporting'
+    ],
+    button: {
+      content: isPlanSelected('professional')
+        ? 'Active Subscription'
+        : 'Upgrade to Professional',
+      onClick: () => handlePlanSelect('professional'),
+      variant: 'secondary',
+      disabled: isPlanSelected('professional'),
+     
     },
-  ];
+  },
+];
+
 
   return (
     <s-page heading="Tree Planting Donation Pricing" inlineSize="base">
@@ -476,7 +491,7 @@ export default function PricingPage() {
         )}
 
         {/* Current Plan Section */}
-        <s-box padding="base"
+        {/* <s-box padding="base"
           background="base"
           borderRadius="base"
           borderWidth="base"
@@ -523,7 +538,7 @@ export default function PricingPage() {
               </s-box>
             </s-stack>
           </s-stack>
-        </s-box>
+        </s-box> */}
         
         {/* Usage Progress Bar for Free Plan */}
         {currentPlan === 'free' && (
@@ -589,27 +604,7 @@ export default function PricingPage() {
           </s-stack>
         </s-box>
         
-        {/* Billing Information */}
-        <s-box padding="base" background="subdued" borderRadius="base">
-          <s-stack direction="block" gap="small">
-            <s-heading level="h4">Usage-Based Pricing</s-heading>
-            <s-text tone="subdued">
-              • <strong>Free Plan:</strong> 5,000 donations per month included
-            </s-text>
-            <s-text tone="subdued">
-              • <strong>Essential Plan:</strong> Unlimited donations for ${plans[1].price}/month
-            </s-text>
-            <s-text tone="subdued">
-              • <strong>Professional Plan:</strong> All features + priority support for ${plans[2].price}/month
-            </s-text>
-            <s-text tone="subdued" variant="bodySm" style={{ marginTop: '8px' }}>
-              Note: One donation = one tree planting contribution. Usage resets on the 1st of each month.
-            </s-text>
-            <s-text tone="subdued" variant="bodySm" style={{ marginTop: '8px' }}>
-              All paid plans include a 14-day free trial. Cancel anytime from your Shopify billing settings.
-            </s-text>
-          </s-stack>
-        </s-box>
+
       </s-stack>
     </s-page>
   );

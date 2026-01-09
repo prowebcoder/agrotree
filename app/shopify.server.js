@@ -105,6 +105,48 @@ export async function getAppMetafields(admin) {
   }
 }
 
+export async function cancelActiveSubscription(admin) {
+  const billingStatus = await getBillingStatus(admin);
+
+  if (!billingStatus.hasActiveSubscription) {
+    return { cancelled: false, reason: "No active subscription" };
+  }
+
+  const subscriptionId = billingStatus.subscriptions[0].id;
+
+  const mutation = `
+    mutation AppSubscriptionCancel($id: ID!) {
+      appSubscriptionCancel(id: $id) {
+        appSubscription {
+          id
+          status
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const response = await admin.graphql(mutation, {
+    variables: { id: subscriptionId },
+  });
+
+  const json = await response.json();
+
+  if (json.data?.appSubscriptionCancel?.userErrors?.length) {
+    throw new Error(
+      json.data.appSubscriptionCancel.userErrors[0].message
+    );
+  }
+
+  return {
+    cancelled: true,
+    subscriptionId,
+  };
+}
+
 export async function setAppMetafield(
   admin,
   {
