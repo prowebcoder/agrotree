@@ -228,50 +228,7 @@ export async function updateThemeAppExtensionConfig(admin, config) {
     return { success: false, error: error.message };
   }
 }
-export async function deleteAppMetafield(admin, key) {
-  try {
-    const getID = await admin.graphql(`
-      query {
-        currentAppInstallation {
-          id
-        }
-      }
-    `);
 
-    const renderId = await getID.json();
-    const ownerId = renderId.data.currentAppInstallation.id;
-
-    const mutation = `
-      mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
-        metafieldsDelete(metafields: $metafields) {
-          deletedMetafields {
-            ownerId
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    const variables = {
-      metafields: [
-        {
-          key,
-          namespace: APP_METAFIELD_NAMESPACE,
-          ownerId,
-        },
-      ],
-    };
-
-    const response = await admin.graphql(mutation, { variables });
-    return await response.json();
-  } catch (error) {
-    console.error('Error deleting app metafield:', error);
-    return { errors: [error.message] };
-  }
-}
 
 // Update the parseMetafields function
 // Update the parseMetafields function for proper boolean handling
@@ -623,53 +580,53 @@ export function getMetafieldValue(metafields, key) {
 }
 
 // shopify.server.js - Add this function
-export async function syncCartAttributes(admin, session) {
-  try {
-    // Get app metafields
-    const metafields = await getAppMetafields(admin);
-    const parsedFields = parseMetafields(metafields);
+// export async function syncCartAttributes(admin, session) {
+//   try {
+//     // Get app metafields
+//     const metafields = await getAppMetafields(admin);
+//     const parsedFields = parseMetafields(metafields);
     
-    // Get donation product info
-    const productId = parsedFields.product_id;
-    const donationAmount = parsedFields.donation_amount || "5.00";
-    const cartEnabled = parsedFields.cart_enabled === 'true' || parsedFields.cart_enabled === true;
+//     // Get donation product info
+//     const productId = parsedFields.product_id;
+//     const donationAmount = parsedFields.donation_amount || "5.00";
+//     const cartEnabled = parsedFields.cart_enabled === 'true' || parsedFields.cart_enabled === true;
     
-    if (!productId) {
-      return null;
-    }
+//     if (!productId) {
+//       return null;
+//     }
     
-    // Get product variant
-    const productResponse = await admin.graphql(
-      `#graphql
-      query GetProduct($id: ID!) {
-        product(id: $id) {
-          variants(first: 1) {
-            edges {
-              node {
-                id
-              }
-            }
-          }
-        }
-      }`,
-      { variables: { id: productId } }
-    );
+//     // Get product variant
+//     const productResponse = await admin.graphql(
+//       `#graphql
+//       query GetProduct($id: ID!) {
+//         product(id: $id) {
+//           variants(first: 1) {
+//             edges {
+//               node {
+//                 id
+//               }
+//             }
+//           }
+//         }
+//       }`,
+//       { variables: { id: productId } }
+//     );
     
-    const productJson = await productResponse.json();
-    const variantId = productJson.data?.product?.variants?.edges[0]?.node?.id;
+//     const productJson = await productResponse.json();
+//     const variantId = productJson.data?.product?.variants?.edges[0]?.node?.id;
     
-    // Return cart attributes configuration
-    return {
-      donation_enabled: cartEnabled.toString(),
-      donation_amount: donationAmount,
-      donation_product_id: productId,
-      donation_variant_id: variantId
-    };
-  } catch (error) {
-    console.error('Error syncing cart attributes:', error);
-    return null;
-  }
-}
+//     // Return cart attributes configuration
+//     return {
+//       donation_enabled: cartEnabled.toString(),
+//       donation_amount: donationAmount,
+//       donation_product_id: productId,
+//       donation_variant_id: variantId
+//     };
+//   } catch (error) {
+//     console.error('Error syncing cart attributes:', error);
+//     return null;
+//   }
+// }
 
 
 // Add these functions to shopify.server.js after the existing functions:
