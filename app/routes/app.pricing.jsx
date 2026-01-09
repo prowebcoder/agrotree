@@ -1,26 +1,41 @@
-// app/routes/app.pricing.jsx - UPDATED VERSION
+// app/routes/app.pricing.jsx - UPDATED VERSION WITH EXTERNAL API INTEGRATION
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLoaderData, useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
 // Loader function - runs on server only
-// In app.pricing.jsx - Update the loader function
 export async function loader({ request }) {
   try {
-    // Try to authenticate - if this fails, we'll handle it gracefully
+    // Try to authenticate
     const { authenticate, getCurrentUsage, getPricingPlan } = await import("../shopify.server");
     
     let admin;
+    let shopDomain = null;
+    
     try {
       const authResult = await authenticate.admin(request);
       admin = authResult.admin;
+      
+      // Get shop domain for reference
+      const shopResponse = await admin.graphql(
+        `#graphql
+        query {
+          shop {
+            myshopifyDomain
+          }
+        }`
+      );
+      
+      const shopJson = await shopResponse.json();
+      shopDomain = shopJson.data?.shop?.myshopifyDomain;
     } catch (authError) {
       console.log("Authentication failed, returning default data");
-      // Return default data for pricing page
       return {
         shopDomain: null,
         currentPlan: 'free',
         donationCount: 0,
+        totalDonations: 0,
+        totalAmount: 0,
         billingStatus: { hasActiveSubscription: false, subscriptions: [] },
         usageLimit: 5000,
         monthlyPrice: 0,
@@ -29,30 +44,66 @@ export async function loader({ request }) {
       };
     }
     
-    // Get current plan and usage from metafields
+    // Get current plan from metafields
     const currentPlan = await getPricingPlan(admin);
-    const donationCount = await getCurrentUsage(admin);
     
     // Use getBillingStatus function
     const billingStatus = await getBillingStatus(admin);
     
-    // Get shop domain for reference
-    const shopResponse = await admin.graphql(
-      `#graphql
-      query {
-        shop {
-          myshopifyDomain
-        }
-      }`
-    );
+    // Fetch usage data from external API
+    let externalUsageData = null;
+    let donationCount = 0;
+    let totalDonations = 0;
+    let totalAmount = 0;
     
-    const shopJson = await shopResponse.json();
-    const shopDomain = shopJson.data?.shop?.myshopifyDomain;
+    if (shopDomain) {
+      try {
+        const externalApiUrl = `https://tree-backend-navy.vercel.app/api/usage/${shopDomain}`;
+        const response = await fetch(externalApiUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (response.ok) {
+          externalUsageData = await response.json();
+          
+          // Calculate current month's donations
+          const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+          donationCount = externalUsageData.data
+            ?.filter(order => {
+              const orderMonth = new Date(order.createdAt).toISOString().slice(0, 7);
+              return orderMonth === currentMonth;
+            })
+            ?.reduce((sum, order) => sum + (order.treesPlanted || 0), 0) || 0;
+          
+          // Get total donations
+          totalDonations = externalUsageData.totalTrees || 0;
+          
+          // Get total amount
+          totalAmount = externalUsageData.totalAmount || 0;
+        } else {
+          console.log('External API not available, using metafield data');
+          // Fallback to metafield data
+          donationCount = await getCurrentUsage(admin);
+        }
+      } catch (error) {
+        console.log('Error fetching external API data:', error);
+        // Fallback to metafield data
+        donationCount = await getCurrentUsage(admin);
+      }
+    } else {
+      // No shop domain, use metafield data
+      donationCount = await getCurrentUsage(admin);
+    }
     
     return {
       shopDomain,
       currentPlan,
       donationCount,
+      totalDonations,
+      totalAmount,
       billingStatus,
       usageLimit: currentPlan === 'free' ? 5000 : 'unlimited',
       monthlyPrice: currentPlan === 'free' ? 0 : currentPlan === 'essential' ? 6.99 : 29.99,
@@ -63,11 +114,12 @@ export async function loader({ request }) {
   } catch (error) {
     console.error('Error loading pricing data:', error);
     
-    // Return default data so page still loads
     return {
       shopDomain: null,
       currentPlan: 'free',
       donationCount: 0,
+      totalDonations: 0,
+      totalAmount: 0,
       billingStatus: { hasActiveSubscription: false, subscriptions: [] },
       usageLimit: 5000,
       monthlyPrice: 0,
@@ -77,7 +129,6 @@ export async function loader({ request }) {
     };
   }
 }
-
 
 // Action function for free plan updates
 export async function action({ request }) {
@@ -105,7 +156,6 @@ export async function action({ request }) {
     return { success: false, error: error.message };
   }
 }
-
 
 // Add this missing import at the top (after the React imports)
 async function getBillingStatus(admin) {
@@ -303,9 +353,20 @@ export default function PricingPage() {
   const { 
     currentPlan, 
     donationCount, 
+    totalDonations,
+    totalAmount,
     billingStatus,
-    usageLimit 
+    usageLimit,
+    shopDomain
   } = loaderData;
+  
+  const [externalData, setExternalData] = useState({
+    donationCount: donationCount,
+    totalDonations: totalDonations,
+    totalAmount: totalAmount
+  });
+  
+  const [isLoading, setIsLoading] = useState(false);
   
   const [urlParams] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -334,39 +395,73 @@ export default function PricingPage() {
     }
   }, [updated, urlPlan, error, shopify]);
   
+  // Fetch external API data on component mount
+  useEffect(() => {
+    const fetchExternalData = async () => {
+      if (!shopDomain) return;
+      
+      setIsLoading(true);
+      try {
+        const externalApiUrl = `https://tree-backend-navy.vercel.app/api/usage/${shopDomain}`;
+        const response = await fetch(externalApiUrl);
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Calculate current month's donations
+          const currentMonth = new Date().toISOString().slice(0, 7);
+          const monthlyDonations = data.data
+            ?.filter(order => {
+              const orderMonth = new Date(order.createdAt).toISOString().slice(0, 7);
+              return orderMonth === currentMonth;
+            })
+            ?.reduce((sum, order) => sum + (order.treesPlanted || 0), 0) || 0;
+          
+          setExternalData({
+            donationCount: monthlyDonations,
+            totalDonations: data.totalTrees || 0,
+            totalAmount: data.totalAmount || 0
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching external data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchExternalData();
+  }, [shopDomain]);
+  
   const getCurrentPlanViewsText = () => {
     if (currentPlan === 'free') {
-      return `${donationCount.toLocaleString()} of ${usageLimit.toLocaleString()} monthly donations`;
+      return `${externalData.donationCount.toLocaleString()} of ${usageLimit.toLocaleString()} monthly donations`;
     }
-    return `${donationCount.toLocaleString()} donations this month`;
+    return `${externalData.donationCount.toLocaleString()} donations this month`;
   };
   
   const handlePlanSelect = (plan) => {
     if (plan === 'free') {
-      // For free plan, just update metafields
       fetcher.submit(
         { plan },
         { method: 'post' }
       );
     } else {
-      // For paid plans, use billing API
       navigate(`/app/billing/${plan}`);
     }
   };
   
   // Check if billing is active for each plan
-const isBillingActive = (plan) => {
-  if (plan === 'free') return currentPlan === 'free';
-
-  return (
-    currentPlan === plan &&
-    billingStatus.subscriptions.some(sub => sub.status === 'ACTIVE')
-  );
-};
-
+  const isBillingActive = (plan) => {
+    if (plan === 'free') return currentPlan === 'free';
+    
+    return (
+      currentPlan === plan &&
+      billingStatus.subscriptions.some(sub => sub.status === 'ACTIVE')
+    );
+  };
   
   const handleFreePlanSelect = () => {
-    // Show confirmation for downgrade
     if (currentPlan !== 'free' && window.confirm('Are you sure you want to switch to the free plan? This will limit you to 5,000 donations per month.')) {
       handlePlanSelect('free');
     } else if (currentPlan === 'free') {
@@ -375,92 +470,94 @@ const isBillingActive = (plan) => {
   };
   
   const isPlanSelected = (planId) => {
-  if (planId === 'free') {
-    return currentPlan === 'free';
-  }
-  return isBillingActive(planId);
-};
-
-  const plans = [
-  {
-    id: 'free',
-    title: 'Free Plan',
-    description: 'Up to 5,000 monthly donations',
-    price: 'Free',
-    frequency: '',
-    features: [
-      'Tree planting donation product',
-      'Cart page integration',
-      'Cart drawer integration',
-      '5,000 monthly donations included',
-      'Basic analytics dashboard',
-      'Email support'
-    ],
-    button: {
-      content: isPlanSelected('free') ? 'Current Plan' : 'Switch to Free',
-      onClick: handleFreePlanSelect,
-      variant: 'secondary',
-      disabled: isPlanSelected('free') || fetcher.state === 'submitting',
-      loading:
-        fetcher.state === 'submitting' &&
-        fetcher.formData?.get('plan') === 'free',
-    },
-  },
-  {
-    id: 'essential',
-    title: 'Essential',
-    description: 'For growing stores',
-    price: '$6.99',
-    frequency: 'month',
-    featuredText: 'Most Popular',
-    features: [
-      'Everything in Free',
-      'Unlimited monthly donations',
-      'Advanced analytics',
-      'Order tracking dashboard',
-      'Custom donation amounts',
-      'Multiple language support',
-      'Priority email support',
-      'Monthly impact reports'
-    ],
-    button: {
-      content: isPlanSelected('essential')
-        ? 'Active Subscription'
-        : 'Upgrade to Essential',
-      onClick: () => handlePlanSelect('essential'),
-      variant: 'primary',
-      disabled: isPlanSelected('essential'),
+    if (planId === 'free') {
+      return currentPlan === 'free';
+    }
+    return isBillingActive(planId);
+  };
   
+  const plans = [
+    {
+      id: 'free',
+      title: 'Free Plan',
+      description: 'Up to 5,000 monthly donations',
+      price: 'Free',
+      frequency: '',
+      features: [
+        'Tree planting donation product',
+        'Cart page integration',
+        'Cart drawer integration',
+        '5,000 monthly donations included',
+        'Basic analytics dashboard',
+        'Email support'
+      ],
+      button: {
+        content: isPlanSelected('free') ? 'Current Plan' : 'Switch to Free',
+        onClick: handleFreePlanSelect,
+        variant: 'secondary',
+        disabled: isPlanSelected('free') || fetcher.state === 'submitting',
+        loading:
+          fetcher.state === 'submitting' &&
+          fetcher.formData?.get('plan') === 'free',
+      },
     },
-  },
-  {
-    id: 'professional',
-    title: 'Professional',
-    description: 'For high-volume stores',
-    price: '$29.99',
-    frequency: 'month',
-    features: [
-      'Everything in Essential',
-      'Custom branding options',
-      'API access for custom integrations',
-      'Advanced targeting rules',
-      'A/B testing capabilities',
-      'Dedicated account manager',
-      'Phone & priority support',
-      'Custom reporting'
-    ],
-    button: {
-      content: isPlanSelected('professional')
-        ? 'Active Subscription'
-        : 'Upgrade to Professional',
-      onClick: () => handlePlanSelect('professional'),
-      variant: 'secondary',
-      disabled: isPlanSelected('professional'),
-     
+    {
+      id: 'essential',
+      title: 'Essential',
+      description: 'For growing stores',
+      price: '$6.99',
+      frequency: 'month',
+      featuredText: 'Most Popular',
+      features: [
+        'Everything in Free',
+        'Unlimited monthly donations',
+        'Advanced analytics',
+        'Order tracking dashboard',
+        'Custom donation amounts',
+        'Multiple language support',
+        'Priority email support',
+        'Monthly impact reports'
+      ],
+      button: {
+        content: isPlanSelected('essential')
+          ? 'Active Subscription'
+          : 'Upgrade to Essential',
+        onClick: () => handlePlanSelect('essential'),
+        variant: 'primary',
+        disabled: isPlanSelected('essential'),
+      },
     },
-  },
-];
-
+    {
+      id: 'professional',
+      title: 'Professional',
+      description: 'For high-volume stores',
+      price: '$29.99',
+      frequency: 'month',
+      features: [
+        'Everything in Essential',
+        'Custom branding options',
+        'API access for custom integrations',
+        'Advanced targeting rules',
+        'A/B testing capabilities',
+        'Dedicated account manager',
+        'Phone & priority support',
+        'Custom reporting'
+      ],
+      button: {
+        content: isPlanSelected('professional')
+          ? 'Active Subscription'
+          : 'Upgrade to Professional',
+        onClick: () => handlePlanSelect('professional'),
+        variant: 'secondary',
+        disabled: isPlanSelected('professional'),
+      },
+    },
+  ];
+  
+  // Calculate progress percentage
+  const progressPercentage = currentPlan === 'free' 
+    ? Math.min((externalData.donationCount / usageLimit) * 100, 100)
+    : 0;
 
   return (
     <s-page heading="Tree Planting Donation Pricing" inlineSize="base">
@@ -491,64 +588,77 @@ const isBillingActive = (plan) => {
         )}
 
         {/* Current Plan Section */}
-        {/* <s-box padding="base"
-          background="base"
-          borderRadius="base"
-          borderWidth="base"
-          borderColor="base">
-          <s-stack direction="block" gap="base">
-            <s-heading level="h3">Current Plan</s-heading>
-            
-            <s-stack gap="base">
-              <s-box
-                accessibilityRole="status"
-                borderRadius="base"
-              >
-                <s-stack direction="block">
-                  <s-text tone="subdued">Active subscription</s-text>
-                  
-                  <s-stack direction="inline" gap="200" alignItems="center">
-                    <s-heading level="h2">
-                      {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)} plan
-                    </s-heading>
-                    <s-badge tone="info">Active</s-badge>
+        {currentPlan && (
+          <s-box padding="base"
+            background="base"
+            borderRadius="base"
+            borderWidth="base"
+            borderColor="base">
+            <s-stack direction="block" gap="base">
+              <s-heading level="h3">Current Plan</s-heading>
+              
+              <s-stack gap="base">
+                <s-box
+                  accessibilityRole="status"
+                  borderRadius="base"
+                >
+                  <s-stack direction="block">
+                    <s-text tone="subdued">Active subscription</s-text>
+                    
+                    <s-stack direction="inline" gap="200" alignItems="center">
+                      <s-heading level="h2">
+                        {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)} plan
+                      </s-heading>
+                      <s-badge tone="info">Active</s-badge>
+                    </s-stack>
+                    
+                    <s-stack direction="block" gap="small" style={{ marginTop: '12px' }}>
+                      <s-text tone="subdued">
+                        <strong>Total Impact:</strong> {externalData.totalDonations} trees planted
+                      </s-text>
+                      <s-text tone="subdued">
+                        <strong>Total Contributions:</strong> ${externalData.totalAmount.toFixed(2)}
+                      </s-text>
+                      <s-text tone="subdued">
+                        <strong>Monthly Usage:</strong> {getCurrentPlanViewsText()}
+                      </s-text>
+                    </s-stack>
+                    
+                    {currentPlan !== 'free' && (
+                      <s-text tone="subdued" variant="bodySm" style={{ marginTop: '8px' }}>
+                        ${currentPlan === 'essential' ? '6.99' : '29.99'} per month • Unlimited donations
+                      </s-text>
+                    )}
+                    
+                    {billingStatus.hasActiveSubscription && (
+                      <s-button 
+                        variant="tertiary" 
+                        size="small"
+                        onClick={() => shopify.intents.invoke?.('admin:shopify:settings:billing')}
+                        style={{ marginTop: '8px' }}
+                      >
+                        Manage Subscription in Shopify
+                      </s-button>
+                    )}
                   </s-stack>
-                  
-                  <s-text tone="subdued">
-                    {getCurrentPlanViewsText()}
-                  </s-text>
-                  
-                  {currentPlan !== 'free' && (
-                    <s-text tone="subdued" variant="bodySm" style={{ marginTop: '8px' }}>
-                      ${currentPlan === 'essential' ? '6.99' : '29.99'} per month • Unlimited donations
-                    </s-text>
-                  )}
-                  
-                  {billingStatus.hasActiveSubscription && (
-                    <s-button 
-                      variant="tertiary" 
-                      size="small"
-                      onClick={() => shopify.intents.invoke?.('admin:shopify:settings:billing')}
-                      style={{ marginTop: '8px' }}
-                    >
-                      Manage Subscription in Shopify
-                    </s-button>
-                  )}
-                </s-stack>
-              </s-box>
+                </s-box>
+              </s-stack>
             </s-stack>
-          </s-stack>
-        </s-box> */}
+          </s-box>
+        )}
         
         {/* Usage Progress Bar for Free Plan */}
         {currentPlan === 'free' && (
           <s-box padding="base" background="subdued" borderRadius="base">
             <s-stack direction="block" gap="small">
-              <s-stack direction="inline" justifyContent="space-between">
+              <s-stack direction="inline" justifyContent="space-between" alignItems="center">
                 <s-text fontWeight="medium">Monthly Usage Progress</s-text>
-                <s-text tone="subdued" variant="bodySm">
-                  {donationCount} / {usageLimit} donations
-                </s-text>
+                <s-stack direction="inline" gap="small" alignItems="center">
+                  {isLoading && <s-spinner size="small" />}
+                  <s-text tone="subdued" variant="bodySm">
+                    {externalData.donationCount.toLocaleString()} / {usageLimit.toLocaleString()} donations
+                  </s-text>
+                </s-stack>
               </s-stack>
               
               <div style={{
@@ -560,9 +670,9 @@ const isBillingActive = (plan) => {
               }}>
                 <div
                   style={{
-                    width: `${Math.min((donationCount / usageLimit) * 100, 100)}%`,
+                    width: `${progressPercentage}%`,
                     height: '100%',
-                    backgroundColor: donationCount >= usageLimit 
+                    backgroundColor: externalData.donationCount >= usageLimit 
                       ? 'var(--p-color-bg-critical)' 
                       : 'var(--p-color-bg-success)',
                     borderRadius: '4px',
@@ -571,13 +681,47 @@ const isBillingActive = (plan) => {
                 />
               </div>
               
-              {donationCount >= usageLimit && (
+              <s-stack direction="inline" justifyContent="space-between" style={{ marginTop: '4px' }}>
+                <s-text tone="subdued" variant="bodySm">
+                  {progressPercentage.toFixed(1)}% of monthly limit used
+                </s-text>
+                <s-text tone="subdued" variant="bodySm">
+                  Resets on 1st of next month
+                </s-text>
+              </s-stack>
+              
+              {externalData.donationCount >= usageLimit && (
                 <s-banner tone="warning">
                   <s-text variant="bodySm">
                     You've reached your monthly limit! Upgrade to continue accepting donations.
                   </s-text>
                 </s-banner>
               )}
+            </s-stack>
+          </s-box>
+        )}
+
+        {/* Impact Summary */}
+        {(externalData.totalDonations > 0 || externalData.totalAmount > 0) && (
+          <s-box padding="base" background="success-subdued" borderRadius="base">
+            <s-stack direction="block" gap="small">
+              <s-heading level="h4">Your Environmental Impact</s-heading>
+              <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                <s-box padding="small" background="surface" borderRadius="base">
+                  <s-stack direction="block" gap="extra-small">
+                    <s-text tone="subdued" variant="bodySm">Trees Planted</s-text>
+                    <s-text variant="headingLg" fontWeight="bold">{externalData.totalDonations}</s-text>
+                    <s-text tone="success" variant="bodySm">Making a difference!</s-text>
+                  </s-stack>
+                </s-box>
+                <s-box padding="small" background="surface" borderRadius="base">
+                  <s-stack direction="block" gap="extra-small">
+                    <s-text tone="subdued" variant="bodySm">Total Contributions</s-text>
+                    <s-text variant="headingLg" fontWeight="bold">${externalData.totalAmount.toFixed(2)}</s-text>
+                    <s-text tone="success" variant="bodySm">Supporting reforestation</s-text>
+                  </s-stack>
+                </s-box>
+              </s-grid>
             </s-stack>
           </s-box>
         )}
@@ -604,7 +748,20 @@ const isBillingActive = (plan) => {
           </s-stack>
         </s-box>
         
-
+        {/* Billing Information */}
+       
+        
+        {/* Refresh Button */}
+        <s-box textAlign="center">
+          <s-button 
+            variant="tertiary" 
+            onClick={() => window.location.reload()}
+            loading={isLoading}
+            icon="refresh"
+          >
+            Refresh Usage Data
+          </s-button>
+        </s-box>
       </s-stack>
     </s-page>
   );
