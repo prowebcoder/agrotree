@@ -4,18 +4,36 @@ import { useNavigate, useLoaderData, useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
 // Loader function - runs on server only
+// In app.pricing.jsx - Update the loader function
 export async function loader({ request }) {
   try {
-    // Dynamically import server-only code
+    // Try to authenticate - if this fails, we'll handle it gracefully
     const { authenticate, getCurrentUsage, getPricingPlan } = await import("../shopify.server");
     
-    const { admin } = await authenticate.admin(request);
+    let admin;
+    try {
+      const authResult = await authenticate.admin(request);
+      admin = authResult.admin;
+    } catch (authError) {
+      console.log("Authentication failed, returning default data");
+      // Return default data for pricing page
+      return {
+        shopDomain: null,
+        currentPlan: 'free',
+        donationCount: 0,
+        billingStatus: { hasActiveSubscription: false, subscriptions: [] },
+        usageLimit: 5000,
+        monthlyPrice: 0,
+        hasError: false,
+        isAuthenticated: false
+      };
+    }
     
     // Get current plan and usage from metafields
     const currentPlan = await getPricingPlan(admin);
     const donationCount = await getCurrentUsage(admin);
     
-    // Use getBillingStatus function (which we just added)
+    // Use getBillingStatus function
     const billingStatus = await getBillingStatus(admin);
     
     // Get shop domain for reference
@@ -37,21 +55,29 @@ export async function loader({ request }) {
       donationCount,
       billingStatus,
       usageLimit: currentPlan === 'free' ? 5000 : 'unlimited',
-      monthlyPrice: currentPlan === 'free' ? 0 : currentPlan === 'essential' ? 6.99 : 29.99
+      monthlyPrice: currentPlan === 'free' ? 0 : currentPlan === 'essential' ? 6.99 : 29.99,
+      hasError: false,
+      isAuthenticated: true
     };
     
   } catch (error) {
     console.error('Error loading pricing data:', error);
+    
+    // Return default data so page still loads
     return {
       shopDomain: null,
       currentPlan: 'free',
       donationCount: 0,
       billingStatus: { hasActiveSubscription: false, subscriptions: [] },
       usageLimit: 5000,
-      monthlyPrice: 0
+      monthlyPrice: 0,
+      hasError: true,
+      errorMessage: error.message,
+      isAuthenticated: false
     };
   }
 }
+
 
 // Action function for free plan updates
 export async function action({ request }) {

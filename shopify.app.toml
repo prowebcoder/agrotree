@@ -2,7 +2,7 @@
 
 client_id = "517178ca09368baf7bc28742a6ecd043"
 name = "Plant Trees"
-application_url = "https://example.com"
+application_url = "https://agrotree.onrender.com"
 embedded = true
 
 [build]
@@ -12,20 +12,22 @@ automatically_update_urls_on_dev = true
 api_version = "2026-01"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/scopes_update" ]
+  uri = "https://agrotree.onrender.com/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
-
-    [[webhooks.subscriptions]]
   topics = [ "orders/create" ]
-  uri = "/webhooks/orders"
+  uri = "https://agrotree.onrender.com/webhooks/orders"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "https://agrotree.onrender.com/webhooks/app/uninstalled"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,read_orders,read_customers"
+scopes = "read_customers,read_orders,write_products"
+optional_scopes = [ ]
+use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://agrotree.onrender.com/api/auth" ]
