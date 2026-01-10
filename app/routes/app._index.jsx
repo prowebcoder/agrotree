@@ -1358,7 +1358,7 @@ const [items, setItems] = useState([
     title: "Add to Theme (Optional)",
     description: "Use theme app extension for better integration with your theme.",
     complete: loaderData.productExists && loaderData.cartEnabled,
-  },
+  }
   // {
   //   id: 3,
   //   title: "Set Up Pricing Plan",
