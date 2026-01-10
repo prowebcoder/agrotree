@@ -1359,12 +1359,12 @@ const [items, setItems] = useState([
     description: "Use theme app extension for better integration with your theme.",
     complete: loaderData.productExists && loaderData.cartEnabled,
   },
-  {
-    id: 3,
-    title: "Set Up Pricing Plan",
-    description: "Choose a pricing plan that fits your store's needs and volume.",
-    complete: false,
-  },
+  // {
+  //   id: 3,
+  //   title: "Set Up Pricing Plan",
+  //   description: "Choose a pricing plan that fits your store's needs and volume.",
+  //   complete: false,
+  // },
 ]);
 
 // Update the useEffect for step 2
