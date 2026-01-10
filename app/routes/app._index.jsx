@@ -748,23 +748,31 @@ export const loader = async ({ request }) => {
           shopifyProduct = responseJson.data.product;
           exists = true;
           variantId = shopifyProduct.variants.edges[0]?.node?.id || null;
-          productPrice =
-            shopifyProduct.variants.edges[0]?.node?.price || "5.00";
+          productPrice = shopifyProduct.variants.edges[0]?.node?.price || "5.00";
 
-          // Sync donation amount metafield
-          if (parsedFields.donation_amount !== productPrice) {
-            await setAppMetafield(admin, {
-              key: "donation_amount",
-              type: "string",
-              value: productPrice
-            });
+          // Sync donation amount metafield - ONLY if we have a valid price
+          if (productPrice && parsedFields.donation_amount !== productPrice) {
+            try {
+              await setAppMetafield(admin, {
+                key: "donation_amount",
+                type: "string",
+                value: productPrice
+              });
+            } catch (err) {
+              console.error("Error setting donation_amount:", err);
+            }
           }
         } else {
-          await setAppMetafield(admin, {
-            key: "product_id",
-            type: "string",
-            value: ""
-          });
+          // Product not found - clear the ID but don't set empty string
+          try {
+            await setAppMetafield(admin, {
+              key: "product_id",
+              type: "string",
+              value: "none" // Use "none" instead of empty string
+            });
+          } catch (err) {
+            console.error("Error clearing product_id:", err);
+          }
           productId = null;
         }
       } catch (err) {
@@ -808,17 +816,30 @@ export const loader = async ({ request }) => {
           variantId = product.variants.edges[0]?.node?.id || null;
           productPrice = product.variants.edges[0]?.node?.price || "5.00";
 
-          await setAppMetafield(admin, {
-            key: "product_id",
-            type: "string",
-            value: productId
-          });
+          // Only set metafields if we have valid values
+          if (productId) {
+            try {
+              await setAppMetafield(admin, {
+                key: "product_id",
+                type: "string",
+                value: productId
+              });
+            } catch (err) {
+              console.error("Error setting product_id:", err);
+            }
+          }
 
-          await setAppMetafield(admin, {
-            key: "donation_amount",
-            type: "string",
-            value: productPrice
-          });
+          if (productPrice) {
+            try {
+              await setAppMetafield(admin, {
+                key: "donation_amount",
+                type: "string",
+                value: productPrice
+              });
+            } catch (err) {
+              console.error("Error setting donation_amount:", err);
+            }
+          }
         }
       } catch (err) {
         console.error("Error searching product by title:", err);
@@ -842,29 +863,44 @@ export const loader = async ({ request }) => {
         last_updated: new Date().toISOString()
       };
 
-      await setAppMetafield(admin, {
-        key: "frontend_config",
-        type: "json",
-        value: JSON.stringify(frontendConfig)
-      });
+      try {
+        await setAppMetafield(admin, {
+          key: "frontend_config",
+          type: "json",
+          value: JSON.stringify(frontendConfig)
+        });
+      } catch (err) {
+        console.error("Error setting frontend_config:", err);
+      }
 
-      await setAppMetafield(admin, {
-        key: "theme_extension_config",
-        type: "json",
-        value: JSON.stringify(frontendConfig)
-      });
+      try {
+        await setAppMetafield(admin, {
+          key: "theme_extension_config",
+          type: "json",
+          value: JSON.stringify(frontendConfig)
+        });
+      } catch (err) {
+        console.error("Error setting theme_extension_config:", err);
+      }
     } else {
-      await setAppMetafield(admin, {
-        key: "frontend_config",
-        type: "json",
-        value: JSON.stringify({
-          enabled: false,
-          donation_amount: "5.00",
-          product_id: null,
-          variant_id: null,
-          shop_domain: shopDomain
-        })
-      });
+      // Only set default config if we have shopDomain
+      if (shopDomain) {
+        try {
+          await setAppMetafield(admin, {
+            key: "frontend_config",
+            type: "json",
+            value: JSON.stringify({
+              enabled: false,
+              donation_amount: "5.00",
+              product_id: productId || "none",
+              variant_id: variantId || "none",
+              shop_domain: shopDomain
+            })
+          });
+        } catch (err) {
+          console.error("Error setting default frontend_config:", err);
+        }
+      }
     }
 
     /* ----------------------------------------------------
@@ -913,8 +949,6 @@ export const action = async ({ request }) => {
     const actionType = formData.get("actionType");
     const price = formData.get("price");
     const cartEnabled = formData.get("cartEnabled");
-
-    // console.log(`Action received: ${actionType}, price: ${price}, cartEnabled: ${cartEnabled}`);
 
     if (actionType === "create") {
       // Check if product already exists
@@ -1000,17 +1034,17 @@ export const action = async ({ request }) => {
       const variantId = product.variants.edges[0]?.node?.id;
       const currentPrice = price || "5.00";
 
-      // console.log(`Product created: ${product.id}, Variant: ${variantId}, Price: ${currentPrice}`);
+      console.log(`Product created: ${product.id}, Variant: ${variantId}, Price: ${currentPrice}`);
 
-      // Update variant price if specified
-      if (price && variantId) {
-        const variantResponse = await admin.graphql(
+      // Try to publish product to online store using publishedAt
+      try {
+        const publishResponse = await admin.graphql(
           `#graphql
-          mutation updateVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-              productVariants {
+          mutation publishProduct($productId: ID!, $publishedAt: DateTime) {
+            productUpdate(input: {id: $productId, publishedAt: $publishedAt}) {
+              product {
                 id
-                price
+                publishedAt
               }
               userErrors {
                 field
@@ -1021,121 +1055,178 @@ export const action = async ({ request }) => {
           {
             variables: {
               productId: product.id,
-              variants: [
-                {
-                  id: variantId,
-                  price: price
-                }
-              ]
-            }
+              publishedAt: new Date().toISOString(),
+            },
           }
         );
-        
-        const variantJson = await variantResponse.json();
-        if (variantJson.data.productVariantsBulkUpdate.userErrors?.length > 0) {
-          console.error('Variant price update errors:', variantJson.data.productVariantsBulkUpdate.userErrors);
+
+        const publishJson = await publishResponse.json();
+        const publishErrors = publishJson.data?.productUpdate?.userErrors || [];
+
+        if (publishErrors.length > 0) {
+          console.error("Error setting published date:", publishErrors);
+        } else {
+          console.log("Product published date set successfully");
+        }
+      } catch (err) {
+        console.error("Failed to set product published date:", err);
+        // Continue anyway - this is optional
+      }
+
+      // Update variant price and mark as non-physical (no shipping)
+      if (variantId) {
+        try {
+          const variantResponse = await admin.graphql(
+            `#graphql
+            mutation updateVariantForNonPhysical($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                productVariants {
+                  id
+                  price
+                }
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }`,
+            {
+              variables: {
+                productId: product.id,
+                variants: [
+                  {
+                    id: variantId,
+                    ...(price ? { price } : {}),
+                    inventoryItem: {
+                      requiresShipping: false,
+                    },
+                  },
+                ],
+              },
+            }
+          );
+          
+          const variantJson = await variantResponse.json();
+          if (variantJson.data.productVariantsBulkUpdate.userErrors?.length > 0) {
+            console.error('Variant update errors:', variantJson.data.productVariantsBulkUpdate.userErrors);
+          } else {
+            console.log('Variant updated successfully - marked as non-physical');
+          }
+        } catch (error) {
+          console.error('Error updating variant:', error);
+          // Continue anyway
         }
       }
 
       // SET METAFIELDS FOR THEME APP EXTENSION (tree_planting namespace)
-      // console.log('Setting theme app extension metafields...');
-      
-      // Delete existing boolean metafields to ensure clean slate
-      try {
-        await deleteAppMetafield(admin, 'donation_enabled');
-        await deleteAppMetafield(admin, 'cart_enabled');
-      } catch (error) {
-        console.log('Error deleting existing metafields:', error);
-        // Continue anyway
+      console.log('Setting theme app extension metafields...');
+
+      // Create an array to store metafield promises
+      const metafieldPromises = [];
+
+      // 1. donation_enabled as BOOLEAN (false initially)
+      if (false !== undefined && false !== null) {
+        metafieldPromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'donation_enabled',
+            type: 'boolean',
+            value: false,
+          }).catch(err => console.error('Error setting donation_enabled:', err))
+        );
       }
 
-      // Set all metafields with CORRECT boolean handling
-      // For Shopify boolean metafields, we MUST use type: 'boolean' and string values "true"/"false"
-      await Promise.all([
-        // 1. donation_enabled as BOOLEAN (false initially)
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'donation_enabled',
-          type: 'boolean', // This tells Shopify it's a boolean type
-          value: false, // This will be converted to string "false" by setAppMetafield
-        }),
+      // 2. cart_enabled as BOOLEAN (false initially)
+      if (false !== undefined && false !== null) {
+        metafieldPromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'cart_enabled',
+            type: 'boolean',
+            value: false,
+          }).catch(err => console.error('Error setting cart_enabled:', err))
+        );
+      }
 
-        // 2. cart_enabled as BOOLEAN (false initially)
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'cart_enabled',
-          type: 'boolean',
-          value: false,
-        }),
+      // 3. product_id as single_line_text_field
+      if (product.id) {
+        metafieldPromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'product_id',
+            type: 'single_line_text_field',
+            value: product.id,
+          }).catch(err => console.error('Error setting product_id:', err))
+        );
+      }
 
-        // 3. product_id as single_line_text_field
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'product_id',
-          type: 'single_line_text_field',
-          value: product.id,
-        }),
+      // 4. donation_amount as single_line_text_field
+      if (currentPrice) {
+        metafieldPromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'donation_amount',
+            type: 'single_line_text_field',
+            value: currentPrice,
+          }).catch(err => console.error('Error setting donation_amount:', err))
+        );
+      }
 
-        // 4. donation_amount as single_line_text_field
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'donation_amount',
-          type: 'single_line_text_field',
-          value: currentPrice,
-        }),
+      // 5. donation_product_id as single_line_text_field
+      if (product.id) {
+        metafieldPromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'donation_product_id',
+            type: 'single_line_text_field',
+            value: product.id,
+          }).catch(err => console.error('Error setting donation_product_id:', err))
+        );
+      }
 
-        // 5. donation_product_id as single_line_text_field
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'donation_product_id',
-          type: 'single_line_text_field',
-          value: product.id,
-        }),
+      // 6. donation_variant_id as single_line_text_field
+      if (variantId) {
+        metafieldPromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'donation_variant_id',
+            type: 'single_line_text_field',
+            value: variantId,
+          }).catch(err => console.error('Error setting donation_variant_id:', err))
+        );
+      }
 
-        // 6. donation_variant_id as single_line_text_field
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'donation_variant_id',
-          type: 'single_line_text_field',
-          value: variantId,
-        }),
-      ]);
+      // Execute all metafield updates with error handling for each
+      try {
+        await Promise.all(metafieldPromises);
+        console.log('All metafields set successfully');
+      } catch (error) {
+        console.error('Some metafields failed to set:', error);
+        // Continue anyway - product is created
+      }
 
       // 7. Store product data as JSON (for app internal use)
-      await setAppMetafield(admin, {
-        key: 'product_data',
-        type: 'json',
-        value: JSON.stringify({
-          productId: product.id,
-          title: product.title,
-          handle: product.handle,
-          price: currentPrice,
-          variantId: variantId,
-          createdAt: new Date().toISOString(),
-          status: product.status,
-        }),
-      });
+      if (product.id && variantId) {
+        try {
+          await setAppMetafield(admin, {
+            key: 'product_data',
+            type: 'json',
+            value: JSON.stringify({
+              productId: product.id,
+              title: product.title,
+              handle: product.handle,
+              price: currentPrice,
+              variantId: variantId,
+              createdAt: new Date().toISOString(),
+              status: product.status,
+            }),
+          });
+        } catch (error) {
+          console.error('Error setting product_data:', error);
+        }
+      }
 
-      // console.log('Product creation complete with all metafields set');
-
-      // Verify the boolean was set correctly
-      const verifyResponse = await admin.graphql(
-        `#graphql
-        query {
-          currentAppInstallation {
-            metafield(namespace: "tree_planting", key: "donation_enabled") {
-              key
-              namespace
-              type
-              value
-            }
-          }
-        }`
-      );
-      
-      const verifyJson = await verifyResponse.json();
-      const metafield = verifyJson.data?.currentAppInstallation?.metafield;
-      // console.log('✅ Created boolean metafield verification:', metafield);
+      console.log('Product creation complete');
 
       return {
         product,
@@ -1145,7 +1236,7 @@ export const action = async ({ request }) => {
     } 
     
     else if (actionType === "updateCart") {
-      // console.log(`Updating cart: cartEnabled = ${cartEnabled}`);
+      console.log(`Updating cart: cartEnabled = ${cartEnabled}`);
       
       // Convert string to boolean
       const isCartEnabled = cartEnabled === 'true';
@@ -1172,7 +1263,7 @@ export const action = async ({ request }) => {
         };
       }
       
-      // console.log(`Product found: ${productId}`);
+      console.log(`Product found: ${productId}`);
       
       // Fetch product details to get current price and variant
       let variantId, currentPrice;
@@ -1207,7 +1298,7 @@ export const action = async ({ request }) => {
           };
         }
         
-        // console.log(`Product verified: ${productJson.data.product.title}, Variant: ${variantId}, Current Price: ${currentPrice}`);
+        console.log(`Product verified: ${productJson.data.product.title}, Variant: ${variantId}, Current Price: ${currentPrice}`);
       } catch (error) {
         console.error('Error verifying product:', error);
         return { 
@@ -1216,97 +1307,96 @@ export const action = async ({ request }) => {
         };
       }
 
-      // Delete existing boolean metafields first (important for type consistency)
-      try {
-        await deleteAppMetafield(admin, 'donation_enabled');
-        await deleteAppMetafield(admin, 'cart_enabled');
-      } catch (error) {
-        console.log('Error deleting existing metafields:', error);
-        // Continue anyway
-      }
-
       // Set all updated metafields with boolean type
-      await Promise.all([
-        // Set boolean metafields with type: 'boolean'
+      const updatePromises = [];
+
+      // Set boolean metafields with type: 'boolean'
+      updatePromises.push(
         setAppMetafield(admin, {
           namespace: 'tree_planting',
           key: 'donation_enabled',
           type: 'boolean',
           value: isCartEnabled,
-        }),
+        }).catch(err => console.error('Error setting donation_enabled:', err))
+      );
 
+      updatePromises.push(
         setAppMetafield(admin, {
           namespace: 'tree_planting',
           key: 'cart_enabled',
           type: 'boolean',
           value: isCartEnabled,
-        }),
+        }).catch(err => console.error('Error setting cart_enabled:', err))
+      );
 
-        // Set text metafields
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'donation_amount',
-          type: 'single_line_text_field',
-          value: currentPrice,
-        }),
+      // Set text metafields (only if values exist)
+      if (currentPrice) {
+        updatePromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'donation_amount',
+            type: 'single_line_text_field',
+            value: currentPrice,
+          }).catch(err => console.error('Error setting donation_amount:', err))
+        );
+      }
 
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'donation_product_id',
-          type: 'single_line_text_field',
-          value: productId,
-        }),
+      if (productId) {
+        updatePromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'donation_product_id',
+            type: 'single_line_text_field',
+            value: productId,
+          }).catch(err => console.error('Error setting donation_product_id:', err))
+        );
+      }
 
-        setAppMetafield(admin, {
-          namespace: 'tree_planting',
-          key: 'donation_variant_id',
-          type: 'single_line_text_field',
-          value: variantId,
-        }),
-      ]);
+      if (variantId) {
+        updatePromises.push(
+          setAppMetafield(admin, {
+            namespace: 'tree_planting',
+            key: 'donation_variant_id',
+            type: 'single_line_text_field',
+            value: variantId,
+          }).catch(err => console.error('Error setting donation_variant_id:', err))
+        );
+      }
 
-      console.log(`Set donation_enabled (boolean) = ${isCartEnabled}`);
+      try {
+        await Promise.all(updatePromises);
+        console.log(`Set donation_enabled (boolean) = ${isCartEnabled}`);
+      } catch (error) {
+        console.error('Error setting metafields:', error);
+        // Continue anyway - return success but with error message
+        return {
+          success: true,
+          cartEnabled: isCartEnabled,
+          donationAmount: currentPrice,
+          productId: productId,
+          variantId: variantId,
+          warning: "Cart settings updated but some metafields may not have been saved correctly."
+        };
+      }
 
       // Also update theme extension configuration
-      await setAppMetafield(admin, {
-        namespace: 'tree_planting',
-        key: 'theme_extension_config',
-        type: 'json',
-        value: JSON.stringify({
-          enabled: isCartEnabled,
-          donation_amount: currentPrice,
-          product_id: productId,
-          variant_id: variantId,
-          last_updated: new Date().toISOString()
-        })
-      });
+      try {
+        await setAppMetafield(admin, {
+          namespace: 'tree_planting',
+          key: 'theme_extension_config',
+          type: 'json',
+          value: JSON.stringify({
+            enabled: isCartEnabled,
+            donation_amount: currentPrice,
+            product_id: productId,
+            variant_id: variantId,
+            last_updated: new Date().toISOString()
+          })
+        });
+      } catch (error) {
+        console.error('Error setting theme_extension_config:', error);
+      }
 
-      // Verify the boolean metafield was set correctly
-      const verifyResponse = await admin.graphql(
-        `#graphql
-        query {
-          currentAppInstallation {
-            metafield(namespace: "tree_planting", key: "donation_enabled") {
-              key
-              namespace
-              type
-              value
-            }
-          }
-        }`
-      );
-      
-      const verifyJson = await verifyResponse.json();
-      const metafield = verifyJson.data?.currentAppInstallation?.metafield;
-      
-      console.log('✅ Updated boolean metafield verification:', {
-        exists: !!metafield,
-        type: metafield?.type,
-        value: metafield?.value,
-        isCorrectType: metafield?.type === 'boolean',
-        willWorkInLiquid: metafield?.value === 'true'
-      });
-      
       return {
         success: true,
         cartEnabled: isCartEnabled,
