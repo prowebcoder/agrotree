@@ -1614,7 +1614,7 @@ useEffect(() => {
                       >
                         Edit Product in Shopify
                       </s-button>
-                      <s-button
+                      {/* <s-button
                         variant="tertiary"
                         onClick={() =>
                           shopify.intents.invoke?.("preview:shopify/Product", {
@@ -1623,7 +1623,7 @@ useEffect(() => {
                         }
                       >
                         View Product
-                      </s-button>
+                      </s-button> */}
                     </s-stack>
                   </s-stack>
                 </s-banner>
