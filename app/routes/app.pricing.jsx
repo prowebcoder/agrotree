@@ -745,7 +745,7 @@ export default function PricingPage() {
        
         
         {/* Refresh Button */}
-        <s-box textAlign="center">
+        {/* <s-box textAlign="center">
           <s-button 
             variant="tertiary" 
             onClick={() => window.location.reload()}
@@ -754,7 +754,7 @@ export default function PricingPage() {
           >
             Refresh Usage Data
           </s-button>
-        </s-box>
+        </s-box> */}
       </s-stack>
     </s-page>
   );
