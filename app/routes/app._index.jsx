@@ -40,7 +40,7 @@ const SetupGuide = ({ onDismiss, onStepComplete, items }) => {
             <s-text>
               Use this personalized guide to get your app up and running.
             </s-text>
-            <div style={{ marginTop: '.8rem' }}>
+            {/* <div style={{ marginTop: '.8rem' }}>
               <s-stack direction="inline" alignItems="center" gap="small-300" paddingBlockEnd={!isGuideOpen ? 'small' : 'none'}>
                 {completedItemsLength === items.length ? (
                   <s-stack direction="inline" wrap={false} gap="extra-small">
@@ -82,7 +82,7 @@ const SetupGuide = ({ onDismiss, onStepComplete, items }) => {
                   </div>
                 ) : null}
               </s-stack>
-            </div>
+            </div> */}
           </s-stack>
         </s-box>
         <div
